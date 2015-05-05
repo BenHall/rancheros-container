@@ -1,0 +1,25 @@
+#!/bin/sh
+[ -c /dev/kvm ] || mknod /dev/kvm c 10 232
+[ -d /dev/net ] || mkdir /dev/net
+[ -c /dev/net/tun ] || mknod /dev/net/tun c 10 200
+[ -f /etc/mtab ] || ln -s /proc/mounts /etc/mtab
+qemu-img create -f qcow2 -o backing_file=system.iso system.qc2
+
+iptables -t nat -A POSTROUTING -s 172.18.0.0/24 -o eth0 -j MASQUERADE
+socat TCP-LISTEN:2222,fork,reuseaddr TCP:172.18.0.2:2222 &
+socat TCP-LISTEN:4243,fork,reuseaddr TCP:172.18.0.2:2376 &
+
+cat > cloudconfig <<EOF
+#cloud-config
+password: rancher
+chpasswd: { expire: False }
+ssh_pwauth: True
+runcmd:
+EOF
+
+cloud-localds cloudconfig.img cloudconfig
+
+exec kvm -nographic -m 512 -vnc :0 \
+         -drive file=system.qc2,if=virtio \
+         -drive file=cloudconfig.img,if=virtio \
+         -device virtio-net,netdev=net0 -netdev tap,id=net0,script=/usr/local/bin/net-script,downscript=no
